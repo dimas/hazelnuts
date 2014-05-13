@@ -186,32 +186,31 @@ public class HazelnutsTest extends AbstractTest {
                 long rps = ops - lastOps;
                 lastOps = ops;
 
-                log.info("ops=" + ops + ", RPS=" + rps);
-
                 rpsHistory.add(rps);
                 while (rpsHistory.size() > WINDOW_SIZE) {
                     rpsHistory.remove(0);
                 }
 
                 if (rpsHistory.size() < WINDOW_SIZE) {
-                    continue;
+                    log.info("ops=" + ops + ", RPS=" + rps);
+                } else {
+                    long avgRps = 0;
+                    for (final Long value : rpsHistory) {
+                        avgRps += value;
+                    }
+                    avgRps /= rpsHistory.size();
+
+                    if (baselineRps < avgRps) {
+                        baselineRps = avgRps;
+                    }
+
+                    log.info("ops=" + ops + ", RPS=" + rps + ", avg RPS=" + avgRps + ", baseline=" + baselineRps);
+                    if (avgRps < baselineRps / 10) {
+                        log.severe("average RPS is significantly below baseline");
+                        ExceptionReporter.report(new Exception("average RPS is significantly below baseline"));
+                    }
                 }
 
-                long avgRps = 0;
-                for (final Long value : rpsHistory) {
-                    avgRps += value;
-                }
-                avgRps /= rpsHistory.size();
-
-                if (baselineRps < avgRps) {
-                    baselineRps = avgRps;
-                }
-
-                log.info("average RPS=" + avgRps + ", baseline=" + baselineRps);
-                if (avgRps < baselineRps / 10) {
-                    log.severe("average RPS is significantly below baseline");
-                    ExceptionReporter.report(new Exception("average RPS is significantly below baseline"));
-                }
             }
         }
     }
