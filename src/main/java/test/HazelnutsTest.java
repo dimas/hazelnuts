@@ -10,13 +10,11 @@ import com.hazelcast.logging.Logger;
 import com.hazelcast.stabilizer.tests.AbstractTest;
 import com.hazelcast.stabilizer.tests.TestRunner;
 import com.hazelcast.stabilizer.worker.ExceptionReporter;
+import test.model.ContainerState;
 import test.processors.ActualPropertiesSetter;
 import test.processors.RequestedPropertiesSetter;
 
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class HazelnutsTest extends AbstractTest {
@@ -39,31 +37,6 @@ public class HazelnutsTest extends AbstractTest {
 
         totalCounter = targetInstance.getAtomicLong(getTestId() + ":TotalCounter");
         counter = targetInstance.getAtomicLong("counter");
-
-        preloadData();
-    }
-
-    private void preloadData() {
-        final ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
-
-        long chunk = itemCount / threadCount;
-        for (int k = 0; k < threadCount; k++) {
-            executorService.submit(new PreloadWorker(0, k * chunk, chunk));
-        }
-
-        // Wait for completion of all submitted tasks
-        executorService.shutdown();
-        while (!stopped()) {
-            try {
-                if (executorService.awaitTermination(1, TimeUnit.SECONDS)) {
-                    break;
-                }
-            } catch (InterruptedException e) {
-                break;
-            }
-        }
-
-        log.info("Finished preloading data");
     }
 
     @Override
@@ -99,7 +72,7 @@ public class HazelnutsTest extends AbstractTest {
         return operations.get();
     }
 
-    private class PreloadWorker implements Runnable {
+    private class TestWorker implements Runnable {
 
         private Date time = new Date();
         private String requestId = UUID.randomUUID().toString();
@@ -107,10 +80,10 @@ public class HazelnutsTest extends AbstractTest {
         private long baseId;
         private long firstItem;
         private long itemCount;
-        private IMap storages;
+        private IMap<String, ContainerState> storages;
         private HazelcastInstance targetInstance;
 
-        private PreloadWorker(final long baseId, final long firstItem, final long itemCount) {
+        private TestWorker(final long baseId, final long firstItem, final long itemCount) {
             this.baseId = baseId;
             this.firstItem = firstItem;
             this.itemCount = itemCount;
@@ -131,54 +104,13 @@ public class HazelnutsTest extends AbstractTest {
 
                 final String storageId = "" + id;
                 final String containerId = String.format("xxxxxxxxxxxxxx_%04x", itemId % 10);
-                final Integer position = null;
 
                 final String key = storageId + "@" + containerId;
-                storages.executeOnKey(key, new ActualPropertiesSetter(time, requestId, position, data));
-                storages.executeOnKey(key, new RequestedPropertiesSetter(time, requestId, position, data));
+                storages.executeOnKey(key, new ActualPropertiesSetter(time, requestId, null, data));
+                storages.executeOnKey(key, new RequestedPropertiesSetter(time, requestId, null, data));
 
-//                counter.incrementAndGet();
+                operations.incrementAndGet();
             }
-        }
-
-        @Override
-        public void run() {
-
-            // "10.104.13.221"
-            final String server = "10.210.182.71";
-
-            log.info(Thread.currentThread().getName() + " preloading");
-
-            ClientConfig clientConfig = new ClientConfig();
-            clientConfig.getNetworkConfig().addAddress(server);
-            targetInstance = HazelcastClient.newHazelcastClient(clientConfig);
-
-            storages = targetInstance.getMap("storages");
-
-            preloadData();
-
-            log.info(Thread.currentThread().getName() + " preloading done");
-
-            targetInstance.shutdown();
-        }
-    }
-
-    private class TestWorker implements Runnable {
-        private final Random random = new Random();
-
-        private Date time = new Date();
-        private String requestId = UUID.randomUUID().toString();
-
-        private long baseId;
-        private long firstItem;
-        private long itemCount;
-        private IMap storages;
-        private HazelcastInstance targetInstance;
-
-        private TestWorker(final long baseId, final long firstItem, final long itemCount) {
-            this.baseId = baseId;
-            this.firstItem = firstItem;
-            this.itemCount = itemCount;
         }
 
         private void updateContinuously() {
@@ -197,10 +129,9 @@ public class HazelnutsTest extends AbstractTest {
 
                     final String storageId = "" + id;
                     final String containerId = String.format("xxxxxxxxxxxxxx_%04x", itemId % 10);
-                    final Integer position = null;
 
                     final String key = storageId + "@" + containerId;
-                    storages.executeOnKey(key, new ActualPropertiesSetter(time, requestId, position, data));
+                    storages.executeOnKey(key, new ActualPropertiesSetter(time, requestId, null, data));
 
                     operations.incrementAndGet();
                 }
@@ -221,6 +152,8 @@ public class HazelnutsTest extends AbstractTest {
 
             storages = targetInstance.getMap("storages");
 
+            preloadData();
+
             updateContinuously();
 
             log.info(Thread.currentThread().getName() + " continuous update finished");
@@ -231,7 +164,7 @@ public class HazelnutsTest extends AbstractTest {
 
     private class ProgressMonitor implements Runnable {
 
-        private final static long WINDOW_SIZE = 20;
+        private final static long WINDOW_SIZE = 30;
 
         private List<Long> rpsHistory = new ArrayList<Long>();
 
@@ -253,7 +186,7 @@ public class HazelnutsTest extends AbstractTest {
                 long rps = ops - lastOps;
                 lastOps = ops;
 
-                log.info("RPS=" + rps);
+                log.info("ops=" + ops + ", RPS=" + rps);
 
                 rpsHistory.add(rps);
                 while (rpsHistory.size() > WINDOW_SIZE) {
@@ -275,7 +208,7 @@ public class HazelnutsTest extends AbstractTest {
                 }
 
                 log.info("average RPS=" + avgRps + ", baseline=" + baselineRps);
-                if (avgRps < baselineRps / 4) {
+                if (avgRps < baselineRps / 10) {
                     log.severe("average RPS is significantly below baseline");
                     ExceptionReporter.report(new Exception("average RPS is significantly below baseline"));
                 }
